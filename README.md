@@ -1,6 +1,6 @@
-# cnki-lit-local
+# cnki-annal
 
-知网文献**纯本地**流水线（ZCode skill）：检索导出题录 → 有头浏览器批量下载 PDF → PyMuPDF 抽全文 → 子代理逐篇精读出 JSON → 汇总本地 Excel 两张表。**全程不碰腾讯文档、零密钥**。
+知网文献本地流水线：检索导出题录 → 有头浏览器批量下载 PDF → 抽取全文 → 逐篇精读出结构化 JSON → 汇总本地 Excel 两张表。
 
 ## 它做什么
 
@@ -13,7 +13,7 @@ pdf_to_txt.py         PDF→全文 txt（PyMuPDF 优先/pypdf 兜底；<200字�
 plan_batches.py       切待分析批次 batches.json（每批5篇，幂等重切）
 audit.py              题名一对一体检（每波子代理跑完必跑）
 build_excel.py        汇总两张表 → 提取结果.xlsx
-cnki_stdio.py         cnki-deepsearch 的 stdio MCP 客户端（自写，可控环境/cwd/超时）
+cnki_stdio.py         cnki-deepsearch 的 stdio MCP 客户端（可控环境/cwd/超时）
 ```
 
 ## 输出版式（定稿）
@@ -21,7 +21,7 @@ cnki_stdio.py         cnki-deepsearch 的 stdio MCP 客户端（自写，可控�
 **表1 文献表**：`文献信息 | 摘要 | 研究贡献 | 核心理论 | 研究方法 | 研究模型与假设`
 ——第一列整条引文，全表按发表年份升序；无题名/作者/来源/年/状态列。
 
-**表2 变量表**：`文献信息 | 概念名称 | 变量类型 | 变量名称 | 变量分类 | 变量测度 | 数据来源`
+**表2 变量表**：`文献信息 | 概念名称 | 变量类型 | 变量名称 | 变量测度 | 数据来源`
 
 ## 快速开始
 
@@ -37,8 +37,8 @@ python scripts\pdf_to_txt.py & python scripts\plan_batches.py
 python scripts\build_excel.py
 ```
 
-依赖：`pip install pymupdf openpyxl`；mcporter + cnki-deepsearch（stdio 服务）；万方兜底另需 `pip install patchright cryptography` 与学校 WebVPN 凭据。完整流程、子代理指令模板与 11 条实战坑见 `SKILL.md`。
+依赖：`pip install pymupdf openpyxl`；mcporter + cnki-deepsearch（stdio 服务）；万方兜底另需 `pip install patchright cryptography` 与学校 WebVPN 凭据。完整流程、子代理指令模板与实战坑清单见 `SKILL.md`。
 
 ## 来源
 
-从实战批次（2026-11，"零工"A 刊 59 篇全流程）沉淀而来；与腾讯文档版流水线（cnki-tencent-pipeline）同源不同交付面，二者可并行使用。
+由 2026 年 11 月"零工"主题 A 刊 59 篇全流程实战沉淀而来。

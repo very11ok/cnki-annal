@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""汇总 提取输出/*.json + 题录 → 本地 Excel 两张表（用户定稿版式）。在文献工程目录里运行。
+"""汇总 提取输出/*.json + 题录 → 本地 Excel 两张表（定稿版式）。在文献工程目录里运行。
 
-用法: python <skill>\\scripts\\build_excel.py [--dir 工程目录] [--meta 题录.jsonl] [--out 提取结果.xlsx]
+用法: python scripts\\build_excel.py [--dir 工程目录] [--meta 题录.jsonl] [--out 提取结果.xlsx]
 
-版式（2026-11-04 用户定稿）：
+版式（定稿）：
   表1 文献表：文献信息 | 摘要 | 研究贡献 | 核心理论 | 研究方法 | 研究模型与假设
-      ——第一列存整条引文（作者.题名[J].来源,年.）；**不要**题名/作者/来源/年/全文txt/分析状态列；
-      按发表年份升序排列（同年按引文字符串）；尚无分析 JSON 的题录也占一行（其余列空）。
-  表2 变量表：文献信息 | 概念名称 | 变量类型 | 变量名称 | 变量分类 | 变量测度 | 数据来源
+      ——第一列存整条引文（作者.题名[J].来源,年.）；按发表年份升序排列（同年按引文字符串）；
+      尚无分析 JSON 的题录也占一行（其余列空）。
+  表2 变量表：文献信息 | 概念名称 | 变量类型 | 变量名称 | 变量测度 | 数据来源
       ——第一列同为引文，行序随表1。
 
-写入前校验：变量类型/变量分类枚举（不合法会打印问题清单并以退出码 1 结束，文件仍生成）。
+写入前校验：变量类型枚举（不合法会打印问题清单并以退出码 1 结束，文件仍生成）。
 """
 from __future__ import annotations
 import argparse, json, re, sys
@@ -21,7 +21,6 @@ from openpyxl.utils import get_column_letter
 
 VAR_TYPES = ["因变量", "自变量", "中介/机制变量", "调节变量", "控制变量",
              "内生检验工具变量", "异质性分析维度变量", "其他变量"]
-VAR_CAT_CODES = ["00", "01", "02", "1", "2", "3", "4", "5", "6", "7", "8"]
 
 
 def norm_title(s: str) -> str:
@@ -41,7 +40,7 @@ def load_meta(p: Path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", default=".", help="文献工程目录（默认当前目录）")
-    ap.add_argument("--meta", default="", help="题录 JSONL（默认 工程目录/题录*.jsonl 第一个）")
+    ap.add_argument("--meta", default="", help="题录 JSONL（默认 工程目录/题录*.jsonl 中条数最多者）")
     ap.add_argument("--out", default="", help="输出 xlsx（默认 工程目录/提取结果.xlsx）")
     a = ap.parse_args()
     base = Path(a.dir).resolve()
@@ -63,7 +62,6 @@ def main():
     if mf.exists():
         manifest = json.loads(mf.read_text(encoding="utf-8"))
     file_by_txt = {Path(m["txt"]).stem: m for m in manifest.values()}
-    pdf_title_norms = {norm_title(m.get("题名", "")) for m in manifest.values()}
 
     rows1, rows2, problems, done_norms = [], [], [], set()
     for jf in sorted((base / "提取输出").glob("*.json")):
@@ -75,17 +73,13 @@ def main():
         title = str(d.get("题名") or "").strip()
         tn = norm_title(title)
         mrec = meta.get(tn, {})
-        info = file_by_txt.get(jf.stem, {})
         for k in ("摘要", "研究贡献", "核心理论", "研究方法", "研究模型与假设"):
             if not str(d.get(k) or "").strip():
                 problems.append(f"{jf.name}: 缺字段 {k}")
         for v in d.get("变量") or []:
-            vt, vc = str(v.get("变量类型", "")), str(v.get("变量分类", ""))
+            vt = str(v.get("变量类型", ""))
             if vt not in VAR_TYPES:
                 problems.append(f"{jf.name}: 非法变量类型「{vt}」")
-            head = vc.split()[0] if vc.split() else ""
-            if head not in VAR_CAT_CODES:
-                problems.append(f"{jf.name}: 非法变量分类「{vc}」")
         done_norms.add(tn)
         intro = mrec.get("引文", title)
         rows1.append([intro, str(d.get("摘要") or ""), str(d.get("研究贡献") or ""),
@@ -94,7 +88,7 @@ def main():
         for v in d.get("变量") or []:
             rows2.append([intro,
                           str(v.get("概念名称") or ""), str(v.get("变量类型") or ""),
-                          str(v.get("变量名称") or ""), str(v.get("变量分类") or ""),
+                          str(v.get("变量名称") or ""),
                           str(v.get("变量测度") or ""), str(v.get("数据来源") or ""),
                           mrec.get("年", "")])
 
@@ -118,11 +112,11 @@ def main():
     for row in rows1:
         ws1.append(row[:-1])          # 年列只用于排序，不落表
     ws2 = wb.create_sheet("变量表")
-    ws2.append(["文献信息", "概念名称", "变量类型", "变量名称", "变量分类", "变量测度", "数据来源"])
+    ws2.append(["文献信息", "概念名称", "变量类型", "变量名称", "变量测度", "数据来源"])
     for row in rows2:
         ws2.append(row[:-1])
     for ws, widths in ((ws1, [44, 60, 50, 44, 44, 50]),
-                       (ws2, [44, 20, 14, 24, 14, 50, 24])):
+                       (ws2, [44, 20, 14, 24, 50, 24])):
         for c in ws[1]:
             c.font = Font(bold=True)
         for i, w in enumerate(widths, 1):
