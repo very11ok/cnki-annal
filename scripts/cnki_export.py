@@ -74,11 +74,14 @@ def call_cnki(expression: str, max_results: int, timeout_ms: int = 240000):
 
 
 def probe_alive(keywords: list[str]) -> bool:
-    """控制探针：用最宽的条件问一次，判断通道是否活着。
+    """控制探针：用最宽的条件问一次，判断通道是否活。
 
     作用：区分「本批真的 0 篇」和「被风控」——两者都表现为"暂无数据"。
+    ⚠ AND 词组（金融*韧性）时必须取首子词做探针：'金融*韧性' 带引号会被
+      当字面串，永远 0 结果，探针失效会把有文献的批误判成 0 篇（2026-11-05 实测坑）。
     """
-    expr = f"TKA=('{keywords[0]}')"
+    w = str(keywords[0]).split("*")[0].strip() or str(keywords[0])
+    expr = f"TKA=('{w}')"
     r = call_cnki(expr, 1)
     return bool(r and r.get("results"))
 
@@ -128,9 +131,15 @@ def year_range(years) -> tuple[str, str] | None:
     return str(this_year - n + 1), str(this_year)
 
 
+def tka_group(kw: str) -> str:
+    """一个检索词组：组内用 * 连接表示 AND（如 金融*韧性 → '金融'*'韧性'）。"""
+    parts = [f"'{p.strip()}'" for p in str(kw).split("*") if p.strip()]
+    return "*".join(parts)
+
+
 def build_expr(keywords: list[str], journals: list[str] | None,
                yr: tuple[str, str] | None) -> str:
-    tka = "+".join(f"'{k.strip()}'" for k in keywords if k.strip())
+    tka = "+".join(tka_group(k) for k in keywords if k.strip())
     parts = [f"TKA=({tka})"]
     if journals:
         ly = " OR ".join(f"LY='{j}'" for j in journals)
@@ -187,7 +196,7 @@ def write_jsonl(records: list[dict], out: Path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--keywords", required=True,
-                    help="篇关摘检索词，多个用逗号/分号分隔（同字段 OR）")
+                    help="篇关摘检索词：多词逗号分隔=OR；词内 * 连接=AND（如 \"金融*韧性\" 或 \"金融*韧性,数字化*韧性\"）")
     ap.add_argument("--scope", choices=["A", "C", "H"], default="A",
                     help="A=A刊清单(62本) C=C刊(CSSCI,页面流程) H=北核(页面流程)")
     ap.add_argument("--years", default="3",
