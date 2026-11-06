@@ -161,6 +161,16 @@ def fetch_one(sess: requests.Session, rec: dict, out_dir: Path,
         if not loc:
             r["why"] = f"下单返回 {head.status_code} 但无 Location"
             return r
+        # 知网人机验证：一出现就整批停手（继续硬打只会延长封禁）
+        if "/bar/verify/" in loc:
+            head.close()
+            r["why"] = "触发知网拼图验证（bar/verify）"
+            r["verify"] = True
+            return r
+        if "ErrorMsg" in loc:
+            head.close()
+            r["why"] = "网关拒绝：" + requests.utils.unquote(loc.split("ErrMsg=")[-1])[:40]
+            return r
         pdf_url = urljoin(pdf_url, loc)
         head.close()
         try:
@@ -304,6 +314,13 @@ def main():
                 if res is None:
                     continue
                 t = str(res.get("题名") or "")
+                if res.get("verify"):
+                    bad_list.append(res)
+                    log(f"[{done}/{len(todo)}] ⚠ {t[:30]}  触发人机验证")
+                    stop.set()
+                    log("\n⚠ 知网弹出拼图验证，已立即停止本批（继续硬打只会让封禁更久）。"
+                        f"\n  等 10-30 分钟额度会自动恢复，或去浏览器过一关，然后重跑同一条命令续传。")
+                    break
                 if res.get("ok"):
                     ok_list.append(res)
                     mapping[res["文件"]] = t
