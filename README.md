@@ -7,7 +7,8 @@
 ```
 refs_to_jsonl.py      EndNote(.enw)/RIS(.xml) 题录 → 流水线 JSONL（带摘要/关键词/卷期页/DOI）
 cnki_export.py        知网检索导出题录（A刊清单62本/篇关摘/年份，批间冷却防风控，控制探针区分"真0篇"与风控）
-cnki_pdf_grab.py      有头浏览器点「PDF下载」批量存本地（cnki-deepsearch 机构 cookie；宁缺勿错 0.62 相似度）
+cnki_pdf_direct.py    知网 PDF 纯 HTTP 直拉（无浏览器/无点击；读详情页 #pdfDown 链接 → 302 → PDF）
+cnki_pdf_grab.py      有头浏览器点「PDF下载」批量存本地（直拉不行时的兜底；cnki-deepsearch 机构 cookie）
 wf_fetch.py           万方兜底通道（patchright + 学校 WebVPN）
 intake_manual.py      人工下载的 PDF 一键入库（复制+题名映射）
 pdf_to_txt.py         PDF→全文 txt（PyMuPDF 优先/pypdf 兜底；<200字判扫描版不硬分析）

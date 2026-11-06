@@ -71,17 +71,48 @@ python <skill>\scripts\cnki_export.py --keywords 零工 --scope A --years all --
 ## 第 1 步：批量下载 PDF（纯本地）
 
 ```powershell
-python <skill>\scripts\cnki_pdf_grab.py --metadata 题录_零工_A刊.jsonl --out PDF --sleep 8 --json > grab_report.log
+python <skill>\scripts\cnki_pdf_direct.py --metadata 题录.jsonl --workers 4 --sleep 0.5 --json > grab_report.json
 ```
 
-- **必须有人盯着屏幕**：有头浏览器会弹窗，验证码/登录页人工过一次（cookie 记住，今后再用就免登）。
+**首选方案，不需要浏览器、不需要点验证码、不需要人盯屏幕。**
+
+- 原理：详情页 HTML 里 `<a id="pdfDown" href="https://bar.cnki.net/bar/download/order?id=...">`
+  是**服务端渲染**出来的，不执行 JS 也能读到。GET 它 → 302 到
+  `bar.cnki.net/docgateway/api/distribute/route?q=...` → 直接返回 `application/pdf`。
+  只要 cookie 有效 + 机构 IP 有下载权限，就能纯脚本批量拉。
+- 实测：500 篇 / 4 并发 / 约 10 分钟，成功率 >95%，全程零人工。
+- 断点续传（已下的跳过）、同名不覆盖、`<8KB` 判错误页并删除、失败原因分类统计。
+- **连续失败 6 篇自动熔断**——多半是 cookie 过期或机构权限掉线。处理：浏览器里正常登录一次知网，
+  导出新 cookie 覆盖 `~/.cnki_cookies.json`，重跑即可（已下的不会重下）。
+- 产出 `映射.json`（文件名 → 题录题名），`pdf_to_txt.py` 直接用，不需要 fix_mapping。
+- 前提：题录里要有 `URL` 或 `DOI` 字段（`refs_to_jsonl.py` / `cnki_export.py` 都会带上）。
+
+> **⚠ 硬约束：知网的人机验证**
+> 同一 IP 连续下载约 15-20 篇后，知网会在 `bar.cnki.net` 强制跳「拼图校验」
+> （`/bar/verify/index.html?...&rb=EveryNTimes&ip=...`）。此时所有下载都返回
+> `200 text/html`，脚本报 **「返回的不是 PDF（CT=text/html）」**。
+> 这不是限流、不是 cookie 过期，**等多久都不会自动解除**，纯脚本也绕不过（滑块需要人拖）。
+> 表现：前十几篇全成功，之后突然全失败且原因是 `text/html`。
+> 处理：在浏览器里打开脚本打印的验证 URL 过一次验证，或换个时段/换 IP 再跑。
+> 因此**大批量（>200 篇）不要指望一次无人值守跑完**，按 10-15 篇一批、批间长时间歇着跑更稳。
+
+### 兜底 A：有头浏览器点击（直拉大面积失败时）
+
+```powershell
+python <skill>\scripts\cnki_pdf_grab.py --metadata 题录.jsonl --out PDF --sleep 8 --json > grab_report.log
+```
+
+- **必须有人盯着屏幕**：有头浏览器会弹窗，验证码/登录页需人工过一次（cookie 记住，今后免登）。
 - 挑结果用归一化题名相似度 ≥0.62（宁缺勿错）；篇间隔 8s 防风控；约 5-25 秒/篇。
 - `--json` 报告含 downloaded（题名↔文件）与 manual（失败原因）两个清单。
-- 失败重试一轮 `--titles "题名"…`；仍失败走兜底：
-  - 万方：`python <skill>\scripts\wf_fetch.py --meta 题录.jsonl --pdf-dir PDF --pause 5`
-    （依赖 `pip install patchright cryptography`；经学校 WebVPN，掉线时**弹窗等人工登录**——
-    无人点窗口必然 0 匹配，别反复空跑，直接转人工）。
-  - 人工下载后：`python <skill>\scripts\intake_manual.py --pdf "下载路径.pdf"`（复制入 PDF\ + 登记映射）。
+- 失败重试一轮 `--titles "题名"…`；仍失败走兜底 B。
+
+### 兜底 B：万方 / 人工
+
+- 万方：`python <skill>\scripts\wf_fetch.py --meta 题录.jsonl --pdf-dir PDF --pause 5`
+  （依赖 `pip install patchright cryptography`；经学校 WebVPN，掉线时**弹窗等人工登录**——
+  无人点窗口必然 0 匹配，别反复空跑，直接转人工）。
+- 人工下载后：`python <skill>\scripts\intake_manual.py --pdf "下载路径.pdf"`（复制入 PDF\ + 登记映射）。
 - 知网个别文献 `cnki_download` 稳定 240s 超时（检索能命中、点击流卡），三轮重试无效就果断转人工。
 
 ## 第 2 步：抽全文 → 切批次
@@ -176,6 +207,8 @@ python <skill>\scripts\build_excel.py         # 两张表 → 提取结果.xlsx�
 | 仿真/纯理论论文被塞进变量表 | 旧规则要求"照列模型参数与决策变量" | 新准则：这两类 `变量: []`、只做表1；每篇必过准入三问（`prompts/分析提示词.md`「变量准入复核」） |
 | 变量表里冒出问卷/访谈变量 | 子代理只照抄原文，没做准入复核 | 跑 `audit_vars.py` 定位该篇 → 重跑该批；子代理指令里的三问不能省 |
 | 变量「数据来源」全是「原文未提及」 | 该篇多半根本没写数据源，或子代理没逐变量落实 | 按不可获取处理，全部删；本篇只留表1 |
+| 直拉时突然全部 `返回的不是 PDF（CT=text/html）` | 知网强制拼图校验（约 15-20 篇触发，`rb=EveryNTimes`） | 浏览器打开验证 URL 过一次；大批量改小批多次跑；别加并发硬顶 |
+| 直拉报 `来源应用不正确(01)` | GET `pdfDown` 的 href 时没带 Referer | 请求头带 `Referer: <详情页URL>`（详情页 URL 优先于站点根） |
 
 ## 依赖
 
