@@ -51,8 +51,10 @@ BAD_SOURCE = [
     "问卷", "量表", "访谈", "实地调研", "调研", "田野", "专家打分", "打分法",
     # 注意别写裸的「实验」：会把「哈佛大学增长实验室」「国家重点实验室」等机构名误判成实验法
     "实验法", "实验数据", "实验组", "实验操纵", "实验研究", "数值实验", "室内实验",
-    "情景模拟", "内部资料", "企业内部", "课题组", "作者整理", "手工整理",
-    "自行整理", "自建", "自采", "未公开", "涉密", "未获取",
+    "情景模拟", "内部资料", "企业内部", "课题组",
+    # 「手工整理/作者整理」不再算硬违规：作者自建指标若底稿是公开政策文件/官方名单/具名库，
+    # 按用户 2026-11-07 口径放行（真实、外部可获取），只记 suspect 提示人工确认底稿。
+    "自采", "未公开", "涉密", "未获取",
 ]
 # 「原文未提及」这类等于无法定位数据源
 NO_SOURCE = ["原文未提及", "未提及", "未说明", "未明确", "不详", "无", ""]
@@ -73,6 +75,8 @@ GOOD_HINTS = [
     "清科", "Zero2IPO", "私募通", "华证", "RESSET", "锐思", "迪博", "数林",
     "北大法宝", "法律信息平台", "海洋科学数据", "应急管理", "工信部", "发改委",
     "教育部", "科技部", "国家税务总局", "国家知识产权", "中国裁判文书",
+    # 公开平台发布的具名报告 / 官方名单（作者据其整理仍属外部可获取）
+    "智联招聘", "前程无忧", "BOSS直聘", "猎聘", "看准网", "中国展会网",
     "高新技术企业认定", "V-Lab", "创新力报告", "市场化指数报告", "复旦大学",
     "王小鲁", "开放数林", "指数网",
     # 第二批 27 篇实测出现的具名来源（2026-11-07）
@@ -129,9 +133,14 @@ def audit_one(jf: Path) -> dict:
 
     sim_hit = has_any(method, SIM_KEYS)
     theory_hit = has_any(method, THEORY_KEYS)
+    alltext = " ".join(str(d.get(k) or "") for k in
+                       ("研究方法", "研究模型与假设", "研究贡献", "摘要",
+                        "变量", "数据来源"))
     if sim_hit or theory_hit:
         out["kind"] = "仿真" if sim_hit else "纯理论"
-        if vs:
+        # 新口径：混合类（正文另有真实具名二手数据实证）允许保留实证变量，不算违规；
+        # 只有通篇无具名库的纯仿真/纯理论篇才要求 变量:[]。
+        if vs and not has_any(alltext, GOOD_HINTS):
             out["violations"].append(
                 f'判定为{out["kind"]}类（研究方法含「{sim_hit or theory_hit}」），'
                 f'按准则应为 变量:[]，实际有 {len(vs)} 条')
@@ -139,8 +148,6 @@ def audit_one(jf: Path) -> dict:
     # ---- 查漏：旧口径「从严三问」曾把 DID 项、总括来源下的控制变量整类删掉 ----
     # 只对非仿真/非纯理论篇检查；全部记 suspects（可疑），不算硬违规。
     if not (sim_hit or theory_hit):
-        alltext = " ".join(str(d.get(k) or "") for k in
-                           ("研究方法", "研究模型与假设", "研究贡献", "摘要"))
         is_reg = bool(has_any(alltext, EMPIRICAL_STRICT))
         has_db = bool(has_any(alltext, GOOD_HINTS))
         no_ctrl_kind = bool(has_any(alltext, NO_CONTROL_KEYS))
@@ -172,7 +179,9 @@ def audit_one(jf: Path) -> dict:
             continue
 
         bad = has_any(src, BAD_SOURCE)
-        if bad:
+        # 新口径：作者自建指标若底稿是具名库/官方文件（来源里同时点了具名词），按真实数据库放行；
+        # 纯自采（含黑词且无具名词）才判违规。
+        if bad and not has_any(src, GOOD_HINTS):
             out["violations"].append(f"{tag} 数据来源含「{bad}」（{src[:30]}）→ 不可获取，应删")
             continue
 
