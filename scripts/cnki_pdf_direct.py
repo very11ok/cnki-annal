@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import threading
@@ -230,6 +231,54 @@ def fetch_one(sess: requests.Session, rec: dict, out_dir: Path,
     return r
 
 
+def auto_loop(a) -> int:
+    """自循环：跑一批 → 等知网额度恢复 → 再跑，到时间上限或没有待办为止。
+
+    做成自循环而不是靠外部每 20 分钟触发一次，是因为定时器最小粒度是 1 小时，
+    而额度窗口是 20 分钟——一次触发内多轮更划算。
+    """
+    import subprocess
+    deadline = time.time() + a.auto_loop * 60
+    total_ok = rounds = 0
+    while time.time() < deadline - 90:
+        rounds += 1
+        cmd = [sys.executable, os.path.abspath(__file__),
+               "--metadata", a.metadata, "--workers", str(a.workers),
+               "--sleep", str(a.sleep), "--max-fail", "2",
+               "--limit", str(a.loop_batch), "--json"]
+        if a.out:
+            cmd += ["--out", a.out]
+        if a.force:
+            cmd += ["--force"]
+        p = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        d = {}
+        try:
+            if "{" in p.stdout:
+                d = json.loads(p.stdout[p.stdout.find("{"):])
+        except Exception:
+            d = {}
+        ok, failed = d.get("ok", 0), d.get("failed", 0)
+        unproc = d.get("unprocessed", 0)
+        total_ok += ok
+        log(f"\n===== 第 {rounds} 轮：成功 {ok}｜失败 {failed}｜未处理 {unproc} =====")
+        if ok == 0 and failed == 0 and unproc == 0:
+            log("没有待下载的文献，全部完成 ✓")
+            break
+        if failed:
+            remain = deadline - time.time()
+            wait = min(a.loop_wait, max(0.0, remain - 60))
+            if wait < 120:
+                log("剩余时间不够再等一轮，结束本次自循环。")
+                break
+            log(f"额度用尽/触发验证，等 {wait / 60:.0f} 分钟让知网放行…")
+            time.sleep(wait)
+        else:
+            time.sleep(5)
+    print(json.dumps({"auto_ok": total_ok, "rounds": rounds}, ensure_ascii=False))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="知网 PDF 纯 HTTP 直拉")
     ap.add_argument("--metadata", required=True, help="题录 JSONL")
@@ -241,9 +290,18 @@ def main():
     ap.add_argument("--cooldown", type=float, default=45.0, help="冷却秒数（默认 45）")
     ap.add_argument("--max-cooldown", type=int, default=6, help="最多冷却几次就放弃（默认 6）")
     ap.add_argument("--retry", type=int, default=1, help="单篇失败重试次数（默认 1）")
+    ap.add_argument("--auto-loop", type=int, default=0,
+                    help="自循环分钟数：跑一批→等额度恢复→再跑，到点退出（0=只跑一轮）")
+    ap.add_argument("--loop-batch", type=int, default=35,
+                    help="自循环时每轮下多少篇（默认 35，接近知网单位时间配额）")
+    ap.add_argument("--loop-wait", type=float, default=1250.0,
+                    help="自循环时触发验证后等多少秒再继续（默认 1250≈21 分钟）")
     ap.add_argument("--force", action="store_true", help="忽略已有文件，强制重下")
     ap.add_argument("--json", action="store_true", help="末尾打印机器可读报告")
     a = ap.parse_args()
+
+    if a.auto_loop:
+        return auto_loop(a)
 
     mp = Path(a.metadata)
     if not mp.exists():
