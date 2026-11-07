@@ -1,12 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""变量准入体检：抓出「不可能从二手数据库取到」的变量，以及仿真/纯理论论文被硬塞变量的情况。
+"""变量准入体检（2026-11-07 用户定稿口径）：抓出该删没删、该记没记的变量。
 
-背景：表2 的用途是给后续实证研究提供可获取的变量清单。所以：
-    ① 仿真类 / 纯理论类论文应当 `变量: []`，只出现在表1；
-    ② 其余论文的每条变量，数据来源必须是具名、外部可获取、能直接构造的二手数据源。
+背景：表2 的用途是给后续实证研究提供可获取的变量清单。用户定稿口径：
+    ① 仿真类 / 纯理论类 / 纯质性案例类论文应当 `变量: []`，只出现在表1；
+    ② 实证类只要用了**真实具名的二手数据库 / 官方公开数据源**，变量就一律记录；
+       不再逐变量追问可获取性；数据来源允许全篇共用一句总括来源；
+    ③ DID 的 Treat/Post/Treat×Post/交乘项、政策试点 dummy、全部控制变量必须保留；
+    ④ 仍不收：问卷/访谈/实地调研/专家打分/企业内部资料/实验与仿真参数/模型决策变量/
+       通篇无具名库且写「原文未提及」的。
 
-本脚本按此规则扫描 `提取输出/*.json`，把违规项列出来供人工处置（**不自动修改任何文件**）。
+除了「违规」，本脚本还会报「疑似漏提」（实证篇变量为空、DID 篇缺处理项、
+回归篇缺控制变量）——这是给回填验收用的，不算硬错误。
+
+本脚本只扫描 `提取输出/*.json`，把问题列出来供人工处置（**不自动修改任何文件**）。
 
 用法（在文献工程目录里运行）：
     python <skill>\\scripts\\audit_vars.py                # 全量体检
@@ -80,6 +87,23 @@ GOOD_HINTS = [
 VAGUE_HINTS = ["相关数据库", "某数据库", "各类数据库", "多种数据库", "相关数据",
                "公开数据", "二手数据", "数据库整理", "公开资料"]
 
+# 「疑似漏提」查漏用词（只报可疑，不算硬违规；用于 2026-11-07 放宽口径后的回填验收）
+EMPIRICAL_KEYS = ["回归", "DID", "双重差分", "实证", "面板数据", "上市公司", "固定效应",
+                  "OLS", "最小二乘", "计量模型", "probit", "logit", "Tobit", "工具变量"]
+# 查漏用更严的「确实做了计量回归」信号，避免把政策阐释/描述性统计/质性案例误判成实证
+EMPIRICAL_STRICT = ["回归", "OLS", "双重差分", "DID", "被解释变量", "变量定义表",
+                    "固定效应", "系数估计", "显著性检验", "回归系数"]
+# QCA / 描述性 / 纯理论类没有「控制变量」概念，不该报漏提
+NO_CONTROL_KEYS = ["QCA", "fsQCA", "组态", "定性比较分析", "描述性统计", "政策阐释",
+                   "文献梳理", "理论分析", "案例研究", "扎根"]
+# 自采无具名库的表述：值得人工确认（新口径也要求至少有一句具名总括来源）
+SELF_COLLECT_HINTS = ["爬取", "自行整理", "手工整理", "自建", "自采", "调研问卷",
+                      "访谈记录", "内部资料", "课题组", "自行测算", "人工标注"]
+DID_KEYS = ["DID", "双重差分", "准自然实验", "Treat", "Post", "交乘项",
+            "政策试点", "试点政策", "多期"]
+TREAT_KEYS = ["Treat", "Post", "交乘", "DID", "did", "试点", "政策虚拟",
+              "政策冲击", "处理组", "处理效应", "清单", "冲击"]
+
 
 def has_any(s: str, keys) -> str | None:
     for k in keys:
@@ -112,6 +136,28 @@ def audit_one(jf: Path) -> dict:
                 f'判定为{out["kind"]}类（研究方法含「{sim_hit or theory_hit}」），'
                 f'按准则应为 变量:[]，实际有 {len(vs)} 条')
 
+    # ---- 查漏：旧口径「从严三问」曾把 DID 项、总括来源下的控制变量整类删掉 ----
+    # 只对非仿真/非纯理论篇检查；全部记 suspects（可疑），不算硬违规。
+    if not (sim_hit or theory_hit):
+        alltext = " ".join(str(d.get(k) or "") for k in
+                           ("研究方法", "研究模型与假设", "研究贡献", "摘要"))
+        is_reg = bool(has_any(alltext, EMPIRICAL_STRICT))
+        has_db = bool(has_any(alltext, GOOD_HINTS))
+        no_ctrl_kind = bool(has_any(alltext, NO_CONTROL_KEYS))
+        if not vs:
+            if is_reg and has_db:
+                out["suspects"].append(
+                    "疑似实证篇被判空变量：正文有回归且点了具名库 → 按新口径应重做变量数组")
+        else:
+            vnames = " ".join(str(v.get("变量名称") or "") + str(v.get("概念名称") or "")
+                              for v in vs)
+            if has_any(alltext, DID_KEYS) and not has_any(vnames, TREAT_KEYS):
+                out["suspects"].append(
+                    "疑似 DID 篇漏提 Treat/Post/Treat×Post/政策试点处理项 → 用户要求「DID 的要留着」")
+            n_ctrl = sum(1 for v in vs if str(v.get("变量类型") or "") == "控制变量")
+            if n_ctrl == 0 and is_reg and not no_ctrl_kind:
+                out["suspects"].append("疑似漏提控制变量（变量表里控制变量 0 条）")
+
     for i, v in enumerate(vs, 1):
         src = str(v.get("数据来源") or "").strip()
         name = str(v.get("变量名称") or v.get("概念名称") or "")[:20]
@@ -130,10 +176,13 @@ def audit_one(jf: Path) -> dict:
             out["violations"].append(f"{tag} 数据来源含「{bad}」（{src[:30]}）→ 不可获取，应删")
             continue
 
-        # 含糊词只在「整条来源都很短」时才算问题；像
-        # 「cnefn.com公开数据库（https://www.cnefn.com/…）」虽含"公开数据"却是具名库，不该误报
-        if not has_any(src, GOOD_HINTS) or (len(src) <= 14 and has_any(src, VAGUE_HINTS)):
-            out["suspects"].append(f"{tag} 数据来源「{src[:30]}」不够具体 → 人工确认能否定位到具名库")
+        # 新口径：允许全篇共用一句总括来源，逐变量不必单独点名库名。
+        # 因此「来源不含白名单词」不再算问题；只有「极短含糊」或「明确自采且无具名库」才提示。
+        if len(src) <= 14 and has_any(src, VAGUE_HINTS):
+            out["suspects"].append(f"{tag} 数据来源「{src[:30]}」含糊且过短 → 人工确认能否定位")
+        elif has_any(src, SELF_COLLECT_HINTS) and not has_any(src, GOOD_HINTS):
+            out["suspects"].append(
+                f"{tag} 数据来源疑似自采且无具名库（{src[:30]}）→ 按准入线应删，或改照抄全文总括来源")
         if "原文未提及" in src or "未提及" in src:
             out["violations"].append(f"{tag} 数据来源写「未提及」→ 应删")
         for need in ("概念名称", "变量测度"):
