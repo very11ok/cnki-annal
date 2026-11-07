@@ -162,6 +162,12 @@ def fetch_one(sess: requests.Session, rec: dict, out_dir: Path,
         if not loc:
             r["why"] = f"下单返回 {head.status_code} 但无 Location"
             return r
+        # 机构 IP 登录态过期：302 回登录页。与拼图验证是两回事，别再误判成限流
+        if "login.cnki.net" in loc:
+            head.close()
+            r["why"] = "机构登录态过期（跳 login.cnki.net）→ 跑 cnki_session.py 续期"
+            r["need_login"] = True
+            return r
         # 知网人机验证：一出现就整批停手（继续硬打只会延长封禁）
         if "/bar/verify/" in loc:
             head.close()
@@ -302,6 +308,17 @@ def main():
 
     if a.auto_loop:
         return auto_loop(a)
+
+    # 机构 IP 登录态约 24h 过期（cookie `c_m_expire`）。过期后 bar 下单 302 到
+    # login.cnki.net，直拉只会看到「返回的不是 PDF」，极易误判成限流/验证。
+    # 2026-11-07 实测：会话 03:43 过期，之后 5 小时定时任务每轮空跑 0 篇。
+    # 因此每轮开跑前纯 HTTP 续期一次；续期失败不阻断，仍用旧 cookie 试。
+    try:
+        from cnki_session import renew as _renew_session
+        if _renew_session(COOKIE_FILE, verbose=False):
+            log("[会话] 机构 IP 登录态已自动续期")
+    except Exception as e:
+        log(f"[会话] 自动续期跳过：{str(e)[:60]}")
 
     mp = Path(a.metadata)
     if not mp.exists():

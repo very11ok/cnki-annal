@@ -211,7 +211,8 @@ python <skill>\scripts\build_excel.py         # 两张表 → 提取结果.xlsx�
 | 仿真/纯理论论文被塞进变量表 | 旧规则要求"照列模型参数与决策变量" | 新准则：这两类 `变量: []`、只做表1；每篇必过准入三问（`prompts/分析提示词.md`「变量准入复核」） |
 | 变量表里冒出问卷/访谈变量 | 子代理只照抄原文，没做准入复核 | 跑 `audit_vars.py` 定位该篇 → 重跑该批；子代理指令里的三问不能省 |
 | 变量「数据来源」全是「原文未提及」 | 该篇多半根本没写数据源，或子代理没逐变量落实 | 按不可获取处理，全部删；本篇只留表1 |
-| 直拉时突然全部 `返回的不是 PDF（CT=text/html）` | 知网强制拼图校验（约 15-20 篇触发，`rb=EveryNTimes`） | 浏览器打开验证 URL 过一次；大批量改小批多次跑；别加并发硬顶 |
+| 直拉时突然全部 `返回的不是 PDF（CT=text/html）` | **两种完全不同的原因，先看 302 Location**：跳 `login.cnki.net` = 机构登录态过期；跳 `/bar/verify/` = 知网拼图校验（按 IP 计，`rb=EveryNTimes`） | 登录态：`python cnki_session.py` 纯 HTTP 续期（脚本已内置自动续期）；拼图：按 IP 计数，**人工在浏览器过验证不会解锁脚本会话**，只能等窗口恢复（`--auto-loop` 内部等 21 分钟再试）；别加并发硬顶 |
+| 机构会话 24h 过期，定时任务整夜空跑 | cookie `c_m_expire`（如 `2026-11-07 03:43`）到期后 bar 下单 302 回登录页，脚本只报「不是 PDF」，极易误判成限流 | `cnki_pdf_direct.py` 每轮开跑前自动调 `cnki_session.renew()`；手动排查用 `python cnki_session.py --check`，续期用 `python cnki_session.py`。实测重新登录**不能**重置拼图验证计数，两者独立 |
 | 直拉报 `来源应用不正确(01)` | GET `pdfDown` 的 href 时没带 Referer | 请求头带 `Referer: <详情页URL>`（详情页 URL 优先于站点根） |
 
 ## 依赖
